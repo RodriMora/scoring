@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sports Scoring Overlay</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+            touch-action: manipulation;
+        }
+        .scoreboard {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            min-height: 200px;
+            position: relative;
+        }
+        .athlete {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 5px;
+            border-radius: 5px;
+            width: 180px;
+            height: 30px;
+            position: absolute;
+            transition: all 0.5s ease;
+        }
+        .position {
+            background-color: #4CAF50;
+            color: white;
+            border-radius: 5px;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: bold;
+            font-size: 0.8em;
+        }
+        .position-1 {
+            background-color: #FFD700;
+            color: #000;
+        }
+        .name {
+            flex-grow: 1;
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .score {
+            font-weight: bold;
+            min-width: 30px;
+            text-align: right;
+        }
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .big-button {
+            font-size: 36px;
+            width: 60px;
+            height: 60px;
+            border-radius: 30px;
+            border: none;
+            margin: 0 10px;
+            cursor: pointer;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            touch-action: manipulation;
+        }
+        .plus-button {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .minus-button {
+            background-color: #f44336;
+            color: white;
+        }
+        .danger-button {
+            background-color: #ff4136;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 10px;
+            cursor: pointer;
+        }
+        .current-score {
+            font-size: 24px;
+            margin: 0 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="scoreboard" id="scoreboard"></div>
+
+    <div class="controls">
+        <h2>Controls</h2>
+        <form id="addAthleteForm">
+            <input type="text" id="athleteName" placeholder="Athlete Name" required>
+            <button type="submit">Add Athlete</button>
+        </form>
+
+        <h3>Update Score</h3>
+        <select id="athleteSelect"></select>
+        <span id="currentScore" class="current-score"></span>
+        <button class="big-button plus-button" onclick="updateScore(1)">+</button>
+        <button class="big-button minus-button" onclick="updateScore(-1)">-</button>
+        <button onclick="removeAthlete()">Remove Athlete</button>
+
+        <h3>Display Count</h3>
+        <select id="displayCount" onchange="updateDisplayCount()">
+            {% for i in range(1, 21) %}
+                <option value="{{ i }}" {% if i == display_count %}selected{% endif %}>{{ i }}</option>
+            {% endfor %}
+        </select>
+
+        <h3>Reset</h3>
+        <button class="danger-button" onclick="wipeAll()">Wipe All Athletes</button>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        let athletes = [];
+        let displayCount = {{ display_count }};
+        let positions = {};
+
+        function updateScore(change) {
+            const athleteId = $('#athleteSelect').val();
+            $.post('/update_score', {athlete_id: athleteId, score_change: change});
+        }
+
+        function removeAthlete() {
+            const athleteId = $('#athleteSelect').val();
+            if (confirm('Are you sure you want to remove this athlete?')) {
+                $.post('/remove_athlete', {athlete_id: athleteId}, function() {
+                    updateAthleteList();
+                });
+            }
+        }
+
+        function wipeAll() {
+            if (confirm('Are you sure you want to remove all athletes? This action cannot be undone.')) {
+                $.post('/wipe_all', function() {
+                    updateAthleteList();
+                });
+            }
+        }
+
+        function updateDisplayCount() {
+            const newCount = $('#displayCount').val();
+            $.post('/update_display_count', {count: newCount}, function() {
+                displayCount = parseInt(newCount);
+                updateScoreboard();
+            });
+        }
+
+        $('#addAthleteForm').submit(function(e) {
+            e.preventDefault();
+            const name = $('#athleteName').val();
+            $.post('/add_athlete', {name: name}, function() {
+                $('#athleteName').val('');
+                updateAthleteList();
+            });
+        });
+
+        function getPosition(index, totalAthletes) {
+            const scoreboardWidth = document.getElementById('scoreboard').clientWidth;
+            const athleteWidth = 190; // 180px width + 10px gap
+            const athleteHeight = 40; // 30px height + 10px gap
+            const columns = Math.floor(scoreboardWidth / athleteWidth);
+            const rows = Math.ceil(totalAthletes / columns);
+
+            const row = Math.floor(index / columns);
+            const col = index % columns;
+
+            const totalWidth = Math.min(columns, totalAthletes) * athleteWidth;
+            const leftOffset = (scoreboardWidth - totalWidth) / 2;
+
+            return {
+                top: row * athleteHeight + 'px',
+                left: leftOffset + col * athleteWidth + 'px'
+            };
+        }
+
+        function updateScoreboard() {
+            const scoreboard = document.getElementById('scoreboard');
+            const existingAthletes = scoreboard.children;
+            const newPositions = {};
+            const displayedAthletes = athletes.slice(0, displayCount);
+
+            displayedAthletes.forEach((athlete, index) => {
+                const position = getPosition(index, displayedAthletes.length);
+                newPositions[athlete.id] = position;
+
+                let athleteElement = document.getElementById(`athlete-${athlete.id}`);
+                if (!athleteElement) {
+                    athleteElement = document.createElement('div');
+                    athleteElement.id = `athlete-${athlete.id}`;
+                    athleteElement.className = 'athlete';
+                    athleteElement.innerHTML = `
+                        <div class="position ${index === 0 ? 'position-1' : ''}">${index + 1}</div>
+                        <div class="name">${athlete.name}</div>
+                        <div class="score">${athlete.score}</div>
+                    `;
+                    scoreboard.appendChild(athleteElement);
+                } else {
+                    athleteElement.querySelector('.position').className = `position ${index === 0 ? 'position-1' : ''}`;
+                    athleteElement.querySelector('.position').textContent = index + 1;
+                    athleteElement.querySelector('.score').textContent = athlete.score;
+                }
+
+                athleteElement.style.top = position.top;
+                athleteElement.style.left = position.left;
+            });
+
+            // Remove athletes that are no longer in the top displayCount
+            for (let i = existingAthletes.length - 1; i >= 0; i--) {
+                const athleteElement = existingAthletes[i];
+                const athleteId = athleteElement.id.split('-')[1];
+                if (!newPositions[athleteId]) {
+                    scoreboard.removeChild(athleteElement);
+                }
+            }
+
+            // Update scoreboard height
+            const rows = Math.ceil(displayedAthletes.length / Math.floor(scoreboard.clientWidth / 190));
+            scoreboard.style.height = (rows * 40 + 40) + 'px'; // Add extra padding
+
+            positions = newPositions;
+        }
+
+        function updateAthleteList() {
+            $.getJSON('/get_athletes', function(data) {
+                athletes = data;
+                const select = document.getElementById('athleteSelect');
+                const currentSelectedId = select.value;
+
+                select.innerHTML = athletes.map(athlete =>
+                    `<option value="${athlete.id}">${athlete.name}</option>`
+                ).join('');
+
+                if (athletes.some(a => a.id == currentSelectedId)) {
+                    select.value = currentSelectedId;
+                } else if (athletes.length > 0) {
+                    select.value = athletes[0].id;
+                }
+
+                updateCurrentScore();
+                updateScoreboard();
+            });
+        }
+
+        function updateCurrentScore() {
+            const selectedId = document.getElementById('athleteSelect').value;
+            const selectedAthlete = athletes.find(a => a.id == selectedId);
+            if (selectedAthlete) {
+                document.getElementById('currentScore').textContent = `Current Score: ${selectedAthlete.score}`;
+            } else {
+                document.getElementById('currentScore').textContent = 'Current Score: N/A';
+            }
+        }
+
+        const evtSource = new EventSource("/stream");
+        evtSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            athletes = data.athletes;
+            displayCount = data.display_count;
+            document.getElementById('displayCount').value = displayCount;
+            updateScoreboard();
+            updateCurrentScore();
+        };
+
+        document.getElementById('athleteSelect').addEventListener('change', updateCurrentScore);
+
+        // Initial update
+        updateAthleteList();
+
+        // Adjust positions on window resize
+        window.addEventListener('resize', updateScoreboard);
+    </script>
+</body>
+</html>
